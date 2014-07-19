@@ -1,0 +1,546 @@
+
+ 
+#include <avr/io.h>
+#include <stdio.h>
+#define F_CPU 1000000UL   
+#include <util/delay.h>
+#include <avr/interrupt.h>
+//#include "nRF24L01.h"
+#define W 1
+#define R 0
+
+#define	nRF_CE	 		RC0
+#define	nRF_CSN	 		RC1
+#define	nRF_IRQ	 		RC2
+#define	nRF_SCK	 		RC3
+#define nRF_MOSI 		RC5
+#define	nRF_MISO 		RC4
+
+#define TRIS_CE      TRISC0
+#define	TRIS_CSN	 TRISC1
+#define	TRIS_IRQ	 TRISC2
+#define	TRIS_SCK	 TRISC3
+#define TRIS_MOSI 	 TRISC5
+#define	TRIS_MISO    TRISC4
+
+/* Memory Map */
+#define CONFIG      0x00
+#define EN_AA       0x01
+#define EN_RXADDR   0x02
+#define SETUP_AW    0x03
+#define SETUP_RETR  0x04
+#define RF_CH       0x05
+#define RF_SETUP    0x06
+#define STATUS      0x07
+#define OBSERVE_TX  0x08
+#define CD          0x09
+#define RX_ADDR_P0  0x0A
+#define RX_ADDR_P1  0x0B
+#define RX_ADDR_P2  0x0C
+#define RX_ADDR_P3  0x0D
+#define RX_ADDR_P4  0x0E
+#define RX_ADDR_P5  0x0F
+#define TX_ADDR     0x10
+#define RX_PW_P0    0x11
+#define RX_PW_P1    0x12
+#define RX_PW_P2    0x13
+#define RX_PW_P3    0x14
+#define RX_PW_P4    0x15
+#define RX_PW_P5    0x16
+#define FIFO_STATUS 0x17
+#define DYNPD	    0x1C
+#define FEATURE	    0x1D
+
+/* Bit Mnemonics */
+#define MASK_RX_DR  6
+#define MASK_TX_DS  5
+#define MASK_MAX_RT 4
+#define EN_CRC      3
+#define CRCO        2
+#define PWR_UP      1
+#define PRIM_RX     0
+#define ENAA_P5     5
+#define ENAA_P4     4
+#define ENAA_P3     3
+#define ENAA_P2     2
+#define ENAA_P1     1
+#define ENAA_P0     0
+#define ERX_P5      5
+#define ERX_P4      4
+#define ERX_P3      3
+#define ERX_P2      2
+#define ERX_P1      1
+#define ERX_P0      0
+#define AW          0
+#define ARD         4
+#define ARC         0
+#define PLL_LOCK    4
+#define RF_DR       3
+#define RF_PWR      6
+#define RX_DR       6
+#define TX_DS       5
+#define MAX_RT      4
+#define RX_P_NO     1
+#define TX_FULL     0
+#define PLOS_CNT    4
+#define ARC_CNT     0
+#define TX_REUSE    6
+#define FIFO_FULL   5
+#define TX_EMPTY    4
+#define RX_FULL     1
+#define RX_EMPTY    0
+#define DPL_P5	    5
+#define DPL_P4	    4
+#define DPL_P3	    3
+#define DPL_P2	    2
+#define DPL_P1	    1
+#define DPL_P0	    0
+#define EN_DPL	    2
+#define EN_ACK_PAY  1
+#define EN_DYN_ACK  0
+
+/* Instruction Mnemonics */
+#define R_REGISTER    0x00
+#define W_REGISTER    0x20
+#define REGISTER_MASK 0x1F
+#define ACTIVATE      0x50
+#define R_RX_PL_WID   0x60
+#define R_RX_PAYLOAD  0x61
+#define W_TX_PAYLOAD  0xA0
+#define W_ACK_PAYLOAD 0xA8
+#define FLUSH_TX      0xE1
+#define FLUSH_RX      0xE2
+#define REUSE_TX_PL   0xE3
+#define NOP           0xFF
+
+/* Non-P omissions */
+#define LNA_HCURR   0
+
+/* P model memory Map */
+#define RPD         0x09
+
+/* P model bit Mnemonics */
+#define RF_DR_LOW   5
+#define RF_DR_HIGH  3
+#define RF_PWR_LOW  1
+#define RF_PWR_HIGH 2
+
+////////////////////////////////////////////
+
+#define BIT(x)  (1<<(x))
+#define CHECKBIT(x,b)  x&b
+#define SETBIT(x,b)  x|=b;
+#define CLEARBIT(x,b)  x&=~b;
+#define TOGGLEBIT(x,b)  x^=b;
+#define LINE1	0x80
+#define LINE2	0xC0
+#define CLR		0x01
+
+
+unsigned char k=0,j=0;
+unsigned char save=0;
+unsigned char d;
+
+
+void WaitMs(unsigned int ms)
+{
+	int i;
+
+	while (ms-- > 0)
+	{
+		/* 16380 (16k) clock cycles for 1ms; each time through loop
+		   is 5 cycles (for loop control + nop) */
+		for (i = 0; i < 3276; ++i)
+			asm("nop");
+	}
+}
+
+ 
+
+
+void lcd_init(void)	//init the lcd
+{	
+	
+	WaitMs(5);
+	lcd_cmd(0x38);
+	lcd_cmd(0x0E);
+	lcd_cmd(LINE1);	
+}
+void toggleE(void)
+{
+SETBIT(PORTC,BIT(1));
+WaitMs(1);
+CLEARBIT(PORTC,BIT(1));
+}
+void dely_ns(unsigned char tim)
+{
+	for(j=0;j<tim;j++)
+	{
+		for(k=0;k<10;k++)
+		{};
+	}
+}
+void lcd_cmd(unsigned char cmd)
+{   
+    WaitMs(2);
+	CLEARBIT(PORTC,BIT(1));
+	CLEARBIT(PORTC,BIT(0));
+	PORTA=cmd;			
+	toggleE();
+}
+void lcd_char(unsigned char single)
+{
+    //WaitMs(1);
+	SETBIT(PORTC,BIT(0));	
+	PORTA=single;						
+	toggleE();
+}
+
+void lcd_string(unsigned char str[32])
+{
+	unsigned char k=0;
+	SETBIT(PORTC,BIT(0));
+	CLEARBIT(PORTC,BIT(1));
+	while(str[k]!='\0')	//Till null character is encountered
+		{   WaitMs(1);
+			if(k==16)
+				lcd_cmd(LINE2);
+			PORTA=str[k];
+			toggleE();
+			k++;
+		}
+}
+
+ 
+
+void InitSPI(void)
+{
+	
+	DDRB |= (1<<DDB7) | (1<<DDB5) | (1<<DDB4) |(1<<DDB3);
+	
+
+	SPCR |= (1<<SPE)|(1<<MSTR);// |(1<<SPR0) |(1<<SPR1);
+	
+	SETBIT(PORTB,BIT(4));	
+	CLEARBIT(PORTB,BIT(3));	
+}
+
+char WriteByteSPI(unsigned char cData)
+{
+	
+	//Load byte to Data register
+	SPDR = cData;
+
+		WaitMs(10);
+			
+		
+	/* Wait for transmission complete */
+	while(!(SPSR & (1<<SPIF)));
+	//d=SPDR;
+		//lcd_cmd(LINE2);
+	//	
+		
+	return SPDR;
+}
+
+uint8_t GetReg(unsigned char reg)
+{	
+	unsigned char status;
+	_delay_us(10);
+	CLEARBIT(PORTB,BIT(4));	//CSN low
+	_delay_us(10);
+	WriteByteSPI(R_REGISTER + reg);	
+
+	_delay_us(10);
+	//reg = WriteByteSPI(NOP);
+	status=WriteByteSPI(NOP);;
+	_delay_us(10);
+	SETBIT(PORTB,BIT(4));
+//	ha(status);
+	//CSN IR_High
+	//return reg;
+	return status;	
+}
+unsigned char WriteToNrf(unsigned char ReadWrite, unsigned char reg, unsigned char *val, unsigned char antVal)	//tar in "ReadWrite" (W el R), "reg" (ett register), "*val" (en array) & "antVal" (antal integer i variabeln)
+{
+//	cli();	
+lcd_cmd(0x01);
+	if (ReadWrite == W)	
+	{
+		reg = W_REGISTER + reg;	
+	
+	
+	}
+	
+	
+	
+	static unsigned char ret[32];		
+	
+	_delay_us(10);	
+	CLEARBIT(PORTB,BIT(4));	
+	_delay_us(10);	
+		
+	WriteByteSPI(reg);
+
+		
+	_delay_us(10); 		
+	
+	int i;
+	for(i=0; i<antVal; i++)
+	{
+		if (ReadWrite == R && reg != W_TX_PAYLOAD)
+		{
+			ret[i]=WriteByteSPI(NOP);
+		
+			
+				
+			_delay_us(100);			
+		}
+		else 
+		{
+			WriteByteSPI(val[i]);
+			
+			
+		//	WriteByteSPI(0x02);
+					_delay_us(10);					
+				
+		}		
+	}
+	SETBIT(PORTB,BIT(4));	
+	
+//	sei(); 
+
+
+	return ret;	
+}
+void nrf24L01_init(void)
+
+{
+
+     //unsigned int dataLen=1;
+	_delay_ms(100);	
+	
+	unsigned char val[5];	
+ 
+	
+	val[0]=0x01;	 
+	WriteToNrf(W, EN_AA, val, 1);
+	
+	val[0]=0x01;
+	WriteToNrf(W, EN_RXADDR, val, 1);
+
+	val[0]=0x03;
+	WriteToNrf(W, SETUP_AW, val, 1); 
+
+	val[0]=0x02;//
+	WriteToNrf(W, RF_CH, val, 1); 	
+
+	val[0]=0x07;
+//	val[0]=0x27;
+	WriteToNrf(W, RF_SETUP, val, 1); 
+	
+	
+	val[0]=0x2F;	
+	WriteToNrf(W, SETUP_RETR, val, 1);
+
+	int i;
+	for(i=0; i<5; i++)	
+	{
+		val[i]=0x12;	
+	}
+	WriteToNrf(W, RX_ADDR_P0, val, 5);  
+		
+	
+	
+	for(i=0; i<5; i++)	
+	{
+		val[i]=0x12;	
+			}
+	WriteToNrf(W, TX_ADDR, val, 5); 
+ 
+	
+	val[0]=5;		
+	WriteToNrf(W, RX_PW_P0, val, 1);
+	
+	
+	val[0]=0x1E;  
+	WriteToNrf(W, CONFIG, val, 1);
+ 
+
+	_delay_ms(100);	
+ 
+	//sei();	
+}
+/*void ChangeAddress(uint8_t adress)
+{
+	_delay_ms(100);
+	uint8_t val[5];
+		int i;
+	for(i=0; i<5; i++)
+	{
+		val[i]=adress;	
+	}
+	WriteToNrf(W, RX_ADDR_P0, val, 5); 
+	
+	
+	for(i=0; i<5; i++)
+	{
+		val[i]=adress;	
+	}
+	WriteToNrf(W, TX_ADDR, val, 5);
+	_delay_ms(100);
+}*/
+void reset(void)
+{
+	_delay_us(10);
+	CLEARBIT(PORTB,BIT(4));	//CSN low
+	_delay_us(10);
+
+	WriteByteSPI(W_REGISTER + STATUS);	//
+	
+	_delay_us(10);
+	
+//	WriteByteSPI(0b01110000);
+WriteByteSPI(0x70);
+		
+	_delay_us(10);
+	SETBIT(PORTB,BIT(4));	//CSN IR_High
+}
+void receive_payload(void)
+{
+//	sei();		//Enable global interrupt
+	
+	SETBIT(PORTB,BIT(3));	 
+	_delay_ms(1000);	
+	CLEARBIT(PORTB,BIT(3)); 
+	
+	//cli();	//Disable global interrupt
+}
+void transmit_payload(unsigned char * W_buff)
+{
+	WriteToNrf(R, FLUSH_TX, W_buff, 0); 
+	
+//	WriteToNrf(R, W_TX_PAYLOAD,W_buff,5);	
+		WriteToNrf(R, W_TX_PAYLOAD,W_buff,5);	
+	
+//	sei();	
+	
+ 
+	_delay_ms(10);		
+	SETBIT(PORTB,BIT(3));	
+	_delay_us(20);		
+	CLEARBIT(PORTB,BIT(3));	
+		_delay_ms(10);	
+			
+ 
+	//cli();	 
+}
+void ha(unsigned char hex)
+{
+	unsigned char h;
+	unsigned char l;
+	h = hex & 0xF0;
+	h = h >> 4;
+	if(h> (0x09))
+	{
+		h += 0x37;	
+	}
+	else
+	{
+		h +=0x30;
+	}
+	lcd_char(h);
+	l = hex & 0x0F;
+	if(l> (0x09))
+	{
+		l += 0x37;
+	}
+	else
+	{
+		l +=0x30;
+	}
+	lcd_char(l);
+
+}
+
+
+uint8_t b; 
+
+int main(void)
+{
+	DDRA=0xFF;
+	DDRC=0xFF;
+	DDRD=0xFF;
+
+//	clockprescale();
+	//usart_init();
+	lcd_init();
+	InitSPI();
+
+	//	reset();
+	uint8_t W_buffer[5];
+//	unsigned char W_buffer[5];
+	int i;
+	for(i=0;i<5;i++)
+	{
+		W_buffer[i]=0x01;
+		//	W_buffer=0x01;
+				
+	}
+
+	
+   
+//	INT0_interrupt_init();
+
+ 
+	nrf24L01_init();
+ 
+		reset();
+
+	
+	while(1)
+	{
+		lcd_cmd(CLR);
+	//	for(i=0;i<5;i++)
+		{
+		transmit_payload(W_buffer);
+		}
+		for(i=0;i<10;i++)
+	
+		_delay_ms(100);	
+	//	WriteToNrf(W,STATUS,0x0E,1);
+		b=GetReg(STATUS);
+	//	ha(b);
+		for(i=0;i<10;i++)
+	
+		_delay_ms(100);	
+			ha(GetReg(STATUS));
+		if((GetReg(STATUS) & (MAX_RT)) != 0)
+		{
+			
+			lcd_string("fail");
+			SETBIT(PORTD,BIT(0));
+			CLEARBIT(PORTD,BIT(1));
+			for(i=0;i<10;i++)
+	
+			_delay_ms(100);	
+				
+		}
+		else
+		{
+		//	ha(W_buffer[1]);
+			lcd_string("succ");
+			CLEARBIT(PORTD,BIT(0));
+			SETBIT(PORTD,BIT(1));	
+			for(i=0;i<10;i++)
+	
+			_delay_ms(100);	
+				
+
+		}
+		
+ 	
+
+	}
+	return 0;
+}
